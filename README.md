@@ -30,6 +30,20 @@ Luego visita `http://localhost:3000`.
 | `↑`       | Propulsar  |
 | `Espacio` | Disparar   |
 
+## Power-ups
+
+| Power-up      | Efecto                                                        |
+| ------------- | ------------------------------------------------------------- |
+| `V` Velocidad | Duplica el empuje y la rotación de la nave durante **5 minutos** |
+
+Aparece como un ícono `V` cian que deriva por el campo. Al recogerlo arranca la
+cuenta regresiva, visible en el HUD (abajo a la izquierda, en cian). La nave y
+la llama se ponen cian mientras dura el efecto.
+
+Cuando expira, el ícono vuelve a aparecer en un punto seguro (fuera del área de
+reaparición). El contador sigue corriendo si la nave muere o se pasa de nivel:
+el efecto no se pierde ni se reinicia.
+
 ## Puntuación
 
 | Asteroide | Puntos |
@@ -43,3 +57,4 @@ Luego visita `http://localhost:3000`.
 - 3 vidas con invencibilidad temporal al reaparecer (parpadeo)
 - Asteroides se parten en fragmentos más pequeños al ser destruidos
 - Partículas de explosión al destruir asteroides
+- Power-up `V` que duplica el empuje y la rotación durante 5 minutos
