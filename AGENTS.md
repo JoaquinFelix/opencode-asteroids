@@ -2,10 +2,10 @@
 
 ## Estructura
 
-Juego HTML5 canvas puro. Cuatro archivos versionados y nada más: `index.html`,
-`game.js`, `favicon.svg`, `README.md`. Sin `package.json`, sin bundler, sin
-dependencias, sin `.gitignore`, sin build, test, lint, typecheck, codegen ni CI.
-No inventes scripts ni tooling.
+Juego HTML5 canvas puro. Archivos versionados: `index.html`, `game.js`,
+`favicon.svg`, `README.md` y `.gitignore` (una sola línea: `.worktrees/`).
+Sin `package.json`, sin bundler, sin dependencias, sin build, test, lint,
+typecheck ni CI. No inventes scripts ni tooling.
 
 - `index.html`: punto de entrada. CSS inline en un `<style>` y un único
   `<script src="game.js">` **clásico** (sin `type="module"`) al cierre de `<body>`.
@@ -19,6 +19,10 @@ No inventes scripts ni tooling.
   assets ni segundo contexto: la lógica y el render están entrelazados.
 - Repo propio (`github.com/JoaquinFelix/opencode-asteroids`), un solo commit,
   sin CI ni releases. Los proyectos hermanos del curso son repos separados.
+- `.opencode/commands/worktree.md`: comando local de OpenCode `/worktree
+  <nombre>`. Un shell block corre `git worktree add ".worktrees/$1"` antes del
+  prompt; el agente después confirma ruta y rama con `git worktree list` o
+  reporta el error. No mueve la sesión.
 
 ## Ejecutar
 
