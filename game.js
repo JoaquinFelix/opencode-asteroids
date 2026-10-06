@@ -41,6 +41,25 @@ function randomSafePoint() {
   return { x, y };
 }
 
+// '#rgb' o '#rrggbb' + alpha -> 'rgba(r,g,b,a)': el color de las partículas se
+// desvanece en cada frame y con este helper no hace falta fijar globalAlpha
+function rgba(hex, alpha) {
+  let h = hex.slice(1);
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// Traza el contorno de una silueta (pares [x,y] relativos a la entidad): cada
+// draw fija su strokeStyle y llama a stroke() por su cuenta
+function strokeShape(shape) {
+  ctx.beginPath();
+  ctx.moveTo(shape[0][0], shape[0][1]);
+  for (let i = 1; i < shape.length; i++)
+    ctx.lineTo(shape[i][0], shape[i][1]);
+  ctx.closePath();
+}
+
 // ── Bullet ────────────────────────────────────────────────────────────────────
 class Bullet {
   constructor(x, y, angle) {
@@ -62,7 +81,7 @@ class Bullet {
   }
 
   draw() {
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = currentSkin().bullet;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
@@ -120,11 +139,7 @@ class Asteroid {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
-    ctx.beginPath();
-    ctx.moveTo(this.verts[0][0], this.verts[0][1]);
-    for (let i = 1; i < this.verts.length; i++)
-      ctx.lineTo(this.verts[i][0], this.verts[i][1]);
-    ctx.closePath();
+    strokeShape(this.verts);
     ctx.stroke();
     ctx.restore();
   }
@@ -134,6 +149,42 @@ class Asteroid {
 const BOOST_TIME  = 300;  // segundos de duración del power-up (5 minutos)
 const BOOST_MULT  = 2;    // multiplicador de empuje y rotación
 const BOOST_COLOR = '#6cf';
+const BOOST_FLAME = 'rgba(0, 204, 255, 0.9)';  // llama mientras el boost tiñe la nave
+
+// ── Skins ─────────────────────────────────────────────────────────────────────
+// Cada skin cambia la silueta (shape), la punta de disparo (nose), la tobera de
+// la llama (nozzle: [x, ancho]) y los colores del casco, las balas, las
+// partículas y la llama. Elegir la que usa S / Shift+S; no se persiste.
+const SKINS = [
+  { name: 'Clásica',
+    shape: [[20, 0], [-12, -9], [-7, 0], [-12, 9]],
+    nose: 20, nozzle: [-8, 4],
+    hull: '#fff', bullet: '#fff', spark: '#fff',
+    flame: 'rgba(255, 130, 0, 0.85)' },
+  { name: 'Interceptor',
+    shape: [[22, 0], [-10, -12], [-4, -3], [-4, 3], [-10, 12]],
+    nose: 22, nozzle: [-6, 3],
+    hull: '#7dffa5', bullet: '#ccffe0', spark: '#7dffa5',
+    flame: 'rgba(0, 255, 170, 0.85)' },
+  { name: 'Halcón',
+    shape: [[18, 0], [-4, -10], [-14, -6], [-8, 0], [-14, 6], [-4, 10]],
+    nose: 18, nozzle: [-8, 3],
+    hull: '#ffd23f', bullet: '#ffe9a8', spark: '#ffd23f',
+    flame: 'rgba(255, 90, 0, 0.9)' },
+  { name: 'Sombra',
+    shape: [[16, 0], [-2, -11], [-9, -4], [-16, 0], [-9, 4], [-2, 11]],
+    nose: 16, nozzle: [-14, 3],
+    hull: '#c78bff', bullet: '#e6c7ff', spark: '#c78bff',
+    flame: 'rgba(190, 80, 255, 0.9)' },
+  { name: 'Brasa',
+    shape: [[20, 0], [-14, -6], [-6, 0], [-14, 6]],
+    nose: 20, nozzle: [-6, 4],
+    hull: '#ff7a5c', bullet: '#ffd0c4', spark: '#ff7a5c',
+    flame: 'rgba(255, 40, 0, 0.9)' },
+];
+
+let skinIndex = 0;  // índice de SKINS activo; vive con el estado de partida, no con reset()
+const currentSkin = () => SKINS[skinIndex];
 
 // ── Ship ──────────────────────────────────────────────────────────────────────
 class Ship {
@@ -185,7 +236,7 @@ class Ship {
   tryShoot() {
     if (this.shootCooldown > 0 || this.dead) return [];
     this.shootCooldown = 0.2;
-    const NOSE = 21;
+    const NOSE = currentSkin().nose;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
     return [new Bullet(ox, oy, this.angle)];
@@ -196,29 +247,26 @@ class Ship {
     // Parpadeo durante invencibilidad de reaparición
     if (this.invincible > 0 && Math.floor(this.invincible * 8) % 2 === 0) return;
 
+    const skin = currentSkin();
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = this.speedTimer > 0 ? BOOST_COLOR : '#fff';
+    ctx.strokeStyle = this.speedTimer > 0 ? BOOST_COLOR : skin.hull;
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
-    // Silueta clásica: triángulo con muesca trasera
-    ctx.beginPath();
-    ctx.moveTo( 20,  0);   // nariz
-    ctx.lineTo(-12, -9);   // ala izquierda
-    ctx.lineTo( -7,  0);   // muesca trasera
-    ctx.lineTo(-12,  9);   // ala derecha
-    ctx.closePath();
+    // Silueta de la skin activa
+    strokeShape(skin.shape);
     ctx.stroke();
 
-    // Llama del propulsor
+    // Llama del propulsor, desde la tobera de la skin
     if (this.thrusting && Math.random() > 0.35) {
+      const [nx, nw] = skin.nozzle;
       ctx.beginPath();
-      ctx.moveTo(-8, -4);
-      ctx.lineTo(-8 - rand(6, 14), 0);
-      ctx.lineTo(-8,  4);
-      ctx.strokeStyle = this.speedTimer > 0 ? 'rgba(0, 204, 255, 0.9)' : 'rgba(255, 130, 0, 0.85)';
+      ctx.moveTo(nx, -nw);
+      ctx.lineTo(nx - rand(6, 14), 0);
+      ctx.lineTo(nx,  nw);
+      ctx.strokeStyle = this.speedTimer > 0 ? BOOST_FLAME : skin.flame;
       ctx.stroke();
     }
 
@@ -288,7 +336,7 @@ class Particle {
 
   draw() {
     const alpha = this.ttl / this.life;
-    ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+    ctx.strokeStyle = rgba(currentSkin().spark, alpha.toFixed(2));
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(this.x, this.y);
@@ -354,6 +402,12 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  // Cambiar de skin: S avanza y Shift+S retrocede, en cualquier estado
+  if (pressed('KeyS')) {
+    const step = keys['ShiftLeft'] || keys['ShiftRight'] ? -1 : 1;
+    skinIndex = wrap(skinIndex + step, SKINS.length);
+  }
+
   if (state === 'gameover') {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
@@ -428,18 +482,16 @@ function update(dt) {
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 function drawLifeIcon(x, y) {
+  const skin = currentSkin();
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-Math.PI / 2);
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth   = 1.2;
+  // Mismos vértices que la nave a escala 0.6; lineWidth queda en 1.2 px finales
+  ctx.scale(0.6, 0.6);
+  ctx.strokeStyle = skin.hull;
+  ctx.lineWidth   = 2;
   ctx.lineJoin    = 'round';
-  ctx.beginPath();
-  ctx.moveTo( 9,  0);
-  ctx.lineTo(-6, -5);
-  ctx.lineTo(-3,  0);
-  ctx.lineTo(-6,  5);
-  ctx.closePath();
+  strokeShape(skin.shape);
   ctx.stroke();
   ctx.restore();
 }
@@ -463,6 +515,10 @@ function drawHUD() {
 
   ctx.textAlign = 'center';
   ctx.fillText(`NIVEL ${level}`, W / 2, 26);
+
+  ctx.fillStyle = currentSkin().hull;
+  ctx.fillText(`SKIN  ${currentSkin().name}`, W / 2, 48);
+  ctx.fillStyle = '#fff';
 
   for (let i = 0; i < lives; i++)
     drawLifeIcon(W - 16 - i * 22, 18);

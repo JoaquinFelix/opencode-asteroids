@@ -12,8 +12,8 @@ No inventes scripts ni tooling.
 - `game.js`: todo el juego en un archivo con `'use strict'` al tope (game.js:1).
   Clases `Bullet`, `Asteroid`, `Ship`, `Pickup`, `Particle`; estado global suelto
   (`ship`, `bullets`, `asteroids`, `particles`, `pickup`, `score`, `lives`,
-  `level`, `state`); funciones `initGame`, `nextLevel`, `spawnPickup`,
-  `explode`, `killShip`, `update(dt)`, `draw()` y `loop(ts)`.
+  `level`, `state`, `skinIndex`); funciones `initGame`, `nextLevel`,
+  `spawnPickup`, `explode`, `killShip`, `update(dt)`, `draw()` y `loop(ts)`.
 - Cada `draw()` pinta directo sobre el `ctx` único del canvas. No hay capas,
   assets ni segundo contexto: la lógica y el render están entrelazados.
 - Repo propio (`github.com/JoaquinFelix/opencode-asteroids`), un solo commit,
@@ -35,19 +35,31 @@ cambiá los dos o el render se descentra. No hay resize ni `devicePixelRatio`.
 ## Constantes de física: inline, sin bloque central
 
 No existe `config` ni `constants`. El tuning vive donde se usa:
-`SPEED = 520` en el constructor de `Bullet` (game.js:49);
-`ROT`/`THRUST`/`DRAG` dentro de `Ship.update` (game.js:165-167);
-`NOSE = 21` en `tryShoot` (game.js:188);
+`SPEED = 520` en el constructor de `Bullet` (game.js:68);
+`ROT`/`THRUST`/`DRAG` dentro de `Ship.update` (game.js:216-218);
+`NOSE = currentSkin().nose` en `tryShoot` (game.js:239);
 `SAFE_DIST = 130` con `randomSafePoint()` en Utils (game.js:33-42), compartido
 por `spawnAsteroids` y `spawnPickup`.
 Tunear = editar donde está; si centralizás, mantené los nombres.
 
-Único grupo de constantes aislado: `BOOST_TIME`/`BOOST_MULT`/`BOOST_COLOR`
-(game.js:134-136), arriba de `class Ship`. Van juntas porque las tres
-constantes las leen tres sitios distintos (`Ship.update`, `Ship.draw`, la
-colisión en `update()`); no es un config general.
+Dos grupos aislados:
 
-`RADII`/`SPEEDS`/`POINTS` (game.js:73-75) se indexan por tamaño 1..3 y el
+- `BOOST_TIME`/`BOOST_MULT`/`BOOST_COLOR`/`BOOST_FLAME` (game.js:149-152), arriba
+  de `class Ship`. Van juntas porque las cuatro constantes las leen cuatro
+  sitios distintos (`Ship.update`, `Ship.draw`, la colisión en `update()` y la
+  llama en `Ship.draw`); no es un config general.
+- `SKINS` (game.js:158-184), tabla de apariencias de la nave: `name`, `shape`
+  (pares `[x,y]` relativos), `nose`, `nozzle` (`[x, ancho]` de la tobera) y los
+  colores `hull`/`bullet`/`spark`/`flame`. La leen `Ship.draw`, `tryShoot`,
+  `Bullet.draw`, `Particle.draw` y `drawLifeIcon` vía `currentSkin()`
+  (game.js:187). `skinIndex` (game.js:186) va junto a la tabla y **no** se
+  resetea en `initGame()`: la elección dura toda la sesión. La cambia el bloque
+  de `S`/`Shift+S` al tope de `update()` (game.js:405-409). Agregar una skin =
+  agregar una entrada; si cambiás siluetas, dejá `nose` en el vértice más a la
+  derecha. Los auxiliares `rgba()` y `strokeShape()` viven en Utils
+  (game.js:44-61) y comparten color de casco, balas, partículas e íconos.
+
+`RADII`/`SPEEDS`/`POINTS` (game.js:92-94) se indexan por tamaño 1..3 y el
 índice 0 es relleno. Agregar un tamaño = tocar las tres tablas más `split()`.
 
 ## Input
@@ -62,42 +74,47 @@ El autofire del navegador no dispara shots porque
 
 Cada entidad lleva `dead` y los arrays se filtran al final de `update`. Las
 colisiones bala/asteroide recolectan en `newAsteroids` y concatenan después
-(game.js:392-406): no hagas `splice` ni borres mientras iterás.
+(game.js:447-459): no hagas `splice` ni borres mientras iterás.
 
 `Pickup` es la excepción a "todo lleva `dead`": es un solo objeto, no un array.
-Se agota con `pickup = null` (game.js:419-423) y `pickup === null` significa
+Se agota con `pickup = null` (game.js:472-477) y `pickup === null` significa
 "recogido, todavía no disponible". `spawnPickup()` lo recria cuando expira el
 boost.
 
 ## Boost "Velocidad"
 
 - El contador es `ship.speedTimer` y **no se declara en `Ship.reset()`**
-  (game.js:140-143): `reset()` corre al morir (game.js:371) y en `nextLevel()`
-  (game.js:335), así que el boost sobrevive a ambos. Si lo movés ahí a secas,
+  (game.js:196-207): `reset()` corre al morir (game.js:425) y en `nextLevel()`
+  (game.js:383), así que el boost sobrevive a ambos. Si lo movés ahí a secas,
   el efecto se pierde al reaparecer.
 - El contador solo baja en `Ship.update`, que solo corre en la rama `playing`
-  (game.js:380): durante los 2 s de `dead` se congela, igual que `invincible`.
+  (game.js:434): durante los 2 s de `dead` se congela, igual que `invincible`.
 - El pickup reaparece por `if (!pickup && ship.speedTimer <= 0) spawnPickup()`
-  (game.js:387). Ese chequeo va **antes** de la colisión del mismo frame; no lo
+  (game.js:441). Ese chequeo va **antes** de la colisión del mismo frame; no lo
   muevas después sin revisar que no re-spawnee con el boost activo.
 - No es un power-up que pueda estar en pantalla dos veces: `initGame()` lo crea
-  (game.js:328) y `nextLevel()` no lo toca, así que cruza cambios de nivel.
+  (game.js:376) y `nextLevel()` no lo toca, así que cruza cambios de nivel.
+- Con boost activo, `Ship.draw` tiñe casco con `BOOST_COLOR` y llama con
+  `BOOST_FLAME` (game.js:254, 269); balas y partículas conservan el color de la
+  skin.
 
 ## Wrap, dt y bootstrap
 
 - `wrap()` (game.js:27) hace el espacio toroidal y lo usan `Bullet`, `Asteroid`,
-  `Ship` y `Pickup`. `Particle` **no** lo usa a propósito (explosiones cortas
+  `Ship`, `Pickup` y también el índice de `skinIndex` al rotar de skin (no es
+  un wrap espacial). `Particle` **no** lo usa a propósito (explosiones cortas
   que salen del canvas). No lo "arregles".
-- `loop` clampa `dt` a 0.05 (game.js:502) para que un cambio de pestaña no
+- `loop` clampa `dt` a 0.05 (game.js:558) para que un cambio de pestaña no
   provoque tunneling. Mantenelo.
 - Al final del archivo corren `initGame()` y `requestAnimationFrame(loop)`
-  (game.js:509-510): importar `game.js` en un test arranca el juego y el loop.
+  (game.js:565-566): importar `game.js` en un test arranca el juego y el loop.
 
 ## Convenciones
 
 - Identificadores y código en inglés; comentarios y README en español.
-- Los textos de UI mezclan inglés (`SCORE`, `GAME OVER`) y español (`NIVEL`,
-  `PUNTAJE`, `ESPACIO PARA REINICIAR`). No los normalices sin preguntar.
+- Los textos de UI mezclan inglés (`SCORE`, `GAME OVER`, `SKIN`) y español
+  (`NIVEL`, `PUNTAJE`, `ESPACIO PARA REINICIAR`, nombres de skins). No los
+  normalices sin preguntar.
 
 ## Verificación
 
