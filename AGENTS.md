@@ -11,9 +11,10 @@ No inventes scripts ni tooling.
   `<script src="game.js">` **clásico** (sin `type="module"`) al cierre de `<body>`.
 - `game.js`: todo el juego en un archivo con `'use strict'` al tope (game.js:1).
   Clases `Bullet`, `Asteroid`, `Ship`, `Pickup`, `Particle`; estado global suelto
-  (`ship`, `bullets`, `asteroids`, `particles`, `pickup`, `score`, `lives`,
+  (`ship`, `bullets`, `asteroids`, `particles`, `pickups`, `score`, `lives`,
   `level`, `state`, `skinIndex`); funciones `initGame`, `nextLevel`,
-  `spawnPickup`, `explode`, `killShip`, `update(dt)`, `draw()` y `loop(ts)`.
+  `spawnPickup`, `updatePickups`, `explode`, `killShip`, `update(dt)`, `draw()`
+  y `loop(ts)`.
 - Cada `draw()` pinta directo sobre el `ctx` único del canvas. No hay capas,
   assets ni segundo contexto: la lógica y el render están entrelazados.
 - Repo propio (`github.com/JoaquinFelix/opencode-asteroids`), un solo commit,
@@ -36,28 +37,32 @@ cambiá los dos o el render se descentra. No hay resize ni `devicePixelRatio`.
 
 No existe `config` ni `constants`. El tuning vive donde se usa:
 `SPEED = 520` en el constructor de `Bullet` (game.js:68);
-`ROT`/`THRUST`/`DRAG` dentro de `Ship.update` (game.js:216-218);
-`NOSE = currentSkin().nose` en `tryShoot` (game.js:239);
+`ROT`/`THRUST`/`DRAG` dentro de `Ship.update` (game.js:221-223);
+`NOSE = currentSkin().nose` y `TRIPLE_SPREAD = 0.15` en `tryShoot`
+(game.js:244-245);
 `SAFE_DIST = 130` con `randomSafePoint()` en Utils (game.js:33-42), compartido
 por `spawnAsteroids` y `spawnPickup`.
 Tunear = editar donde está; si centralizás, mantené los nombres.
 
 Dos grupos aislados:
 
-- `BOOST_TIME`/`BOOST_MULT`/`BOOST_COLOR`/`BOOST_FLAME` (game.js:149-152), arriba
-  de `class Ship`. Van juntas porque las cuatro constantes las leen cuatro
-  sitios distintos (`Ship.update`, `Ship.draw`, la colisión en `update()` y la
-  llama en `Ship.draw`); no es un config general.
-- `SKINS` (game.js:158-184), tabla de apariencias de la nave: `name`, `shape`
+- `BOOST_MULT` (game.js:149) y `POWERUPS` (game.js:152-155), arriba de `class
+  Ship`. `POWERUPS` es el único sitio donde vive la metadata de los power-ups
+  (`time`/`color`/`glyph`/`label`/`flame`): la leen `Pickup.draw`, `Ship.draw`
+  y `activePowerup`, la colisión en `update()` (game.js:505-512) y el HUD
+  (game.js:554-555). `BOOST_MULT` no está en la tabla porque es mecánica
+  específica de Velocidad y solo lo lee `Ship.update` (game.js:224). Agregar un
+  power-up = una fila en la tabla más su mecánica.
+- `SKINS` (game.js:161-187), tabla de apariencias de la nave: `name`, `shape`
   (pares `[x,y]` relativos), `nose`, `nozzle` (`[x, ancho]` de la tobera) y los
   colores `hull`/`bullet`/`spark`/`flame`. La leen `Ship.draw`, `tryShoot`,
   `Bullet.draw`, `Particle.draw` y `drawLifeIcon` vía `currentSkin()`
-  (game.js:187). `skinIndex` (game.js:186) va junto a la tabla y **no** se
+  (game.js:190). `skinIndex` (game.js:189) va junto a la tabla y **no** se
   resetea en `initGame()`: la elección dura toda la sesión. La cambia el bloque
-  de `S`/`Shift+S` al tope de `update()` (game.js:405-409). Agregar una skin =
+  de `S`/`Shift+S` al tope de `update()` (game.js:437-440). Agregar una skin =
   agregar una entrada; si cambiás siluetas, dejá `nose` en el vértice más a la
   derecha. Los auxiliares `rgba()` y `strokeShape()` viven en Utils
-  (game.js:44-61) y comparten color de casco, balas, partículas e íconos.
+  (game.js:46-61) y comparten color de casco, balas, partículas e íconos.
 
 `RADII`/`SPEEDS`/`POINTS` (game.js:92-94) se indexan por tamaño 1..3 y el
 índice 0 es relleno. Agregar un tamaño = tocar las tres tablas más `split()`.
@@ -74,29 +79,36 @@ El autofire del navegador no dispara shots porque
 
 Cada entidad lleva `dead` y los arrays se filtran al final de `update`. Las
 colisiones bala/asteroide recolectan en `newAsteroids` y concatenan después
-(game.js:447-459): no hagas `splice` ni borres mientras iterás.
+(game.js:479-491): no hagas `splice` ni borres mientras iterás.
 
-`Pickup` es la excepción a "todo lleva `dead`": es un solo objeto, no un array.
-Se agota con `pickup = null` (game.js:472-477) y `pickup === null` significa
-"recogido, todavía no disponible". `spawnPickup()` lo recria cuando expira el
-boost.
+`Pickup` es la excepción a "todo lleva `dead`": vive en `pickups`, un objeto
+con un slot por tipo (`pickups.speed`, `pickups.triple`), no en un array. Se
+agota con `pickups[kind] = null` (game.js:504-512) y `null` significa "recogido,
+todavía no disponible". `spawnPickup(kind)` (game.js:385) lo recria cuando expira
+ese boost. Un slot en `null` no bloquea al otro: los dos power-ups pueden estar
+en pantalla a la vez, y `initGame()` (game.js:406-407) los rehace juntos.
 
-## Boost "Velocidad"
+## Power-ups
 
-- El contador es `ship.speedTimer` y **no se declara en `Ship.reset()`**
-  (game.js:196-207): `reset()` corre al morir (game.js:425) y en `nextLevel()`
-  (game.js:383), así que el boost sobrevive a ambos. Si lo movés ahí a secas,
-  el efecto se pierde al reaparecer.
-- El contador solo baja en `Ship.update`, que solo corre en la rama `playing`
-  (game.js:434): durante los 2 s de `dead` se congela, igual que `invincible`.
-- El pickup reaparece por `if (!pickup && ship.speedTimer <= 0) spawnPickup()`
-  (game.js:441). Ese chequeo va **antes** de la colisión del mismo frame; no lo
-  muevas después sin revisar que no re-spawnee con el boost activo.
-- No es un power-up que pueda estar en pantalla dos veces: `initGame()` lo crea
-  (game.js:376) y `nextLevel()` no lo toca, así que cruza cambios de nivel.
-- Con boost activo, `Ship.draw` tiñe casco con `BOOST_COLOR` y llama con
-  `BOOST_FLAME` (game.js:254, 269); balas y partículas conservan el color de la
-  skin.
+- Dos contadores en la nave, `ship.speedTimer` y `ship.tripleTimer`, y **ninguno
+  se declara en `Ship.reset()`** (game.js:200-211): `reset()` corre al morir
+  (game.js:456) y en `nextLevel()` (game.js:414), así que los boosts sobreviven
+  a ambos. Si los movés ahí a secas, el efecto se pierde al reaparecer.
+- Los contadores solo bajan en `Ship.update` (game.js:218-219), que solo corre
+  en la rama `playing` (game.js:460): durante los 2 s de `dead` se congelan,
+  igual que `invincible`.
+- El efecto solo lee su propio contador: `mult` en `Ship.update` (game.js:224,
+  speed), `tryShoot`/`activePowerup` en `Ship` (game.js:241-261, triple). No
+  cruces mecánicas.
+- El pickup de cada tipo reaparece por su propia línea (game.js:472-473), atada
+  a su propio timer. Esas líneas van **antes** de la colisión del mismo frame
+  (game.js:504-512); no las muevas después sin revisar que no re-spawneen con
+  el boost activo.
+- El efecto cruza muerte y cambio de nivel porque `initGame()` lo crea
+  (game.js:406-407) y `nextLevel()` no toca ni los timers ni los slots.
+- Con un power-up activo, `Ship.draw` tiñe casco con `powerup.color` y llama con
+  `powerup.flame` (game.js:273, 288); balas y partículas conservan el color de
+  la skin.
 
 ## Wrap, dt y bootstrap
 
@@ -104,10 +116,10 @@ boost.
   `Ship`, `Pickup` y también el índice de `skinIndex` al rotar de skin (no es
   un wrap espacial). `Particle` **no** lo usa a propósito (explosiones cortas
   que salen del canvas). No lo "arregles".
-- `loop` clampa `dt` a 0.05 (game.js:558) para que un cambio de pestaña no
+- `loop` clampa `dt` a 0.05 (game.js:600) para que un cambio de pestaña no
   provoque tunneling. Mantenelo.
 - Al final del archivo corren `initGame()` y `requestAnimationFrame(loop)`
-  (game.js:565-566): importar `game.js` en un test arranca el juego y el loop.
+  (game.js:607-608): importar `game.js` en un test arranca el juego y el loop.
 
 ## Convenciones
 

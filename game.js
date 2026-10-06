@@ -145,11 +145,14 @@ class Asteroid {
   }
 }
 
-// ── Boost "Velocidad" ─────────────────────────────────────────────────────────
-const BOOST_TIME  = 300;  // segundos de duración del power-up (5 minutos)
-const BOOST_MULT  = 2;    // multiplicador de empuje y rotación
-const BOOST_COLOR = '#6cf';
-const BOOST_FLAME = 'rgba(0, 204, 255, 0.9)';  // llama mientras el boost tiñe la nave
+// ── Power-ups ─────────────────────────────────────────────────────────────────
+const BOOST_MULT = 2;   // multiplicador de empuje y rotación (solo "Velocidad")
+
+// Metadata compartida por el pickup y su efecto: duración, color, glifo, HUD y llama
+const POWERUPS = {
+  speed:  { time: 300, color: '#6cf', glyph: 'V', label: 'VELOCIDAD', flame: 'rgba(0, 204, 255, 0.9)' },
+  triple: { time: 5,   color: '#fc6', glyph: 'T', label: 'TRIPLE',    flame: 'rgba(255, 204, 102, 0.9)' },
+};
 
 // ── Skins ─────────────────────────────────────────────────────────────────────
 // Cada skin cambia la silueta (shape), la punta de disparo (nose), la tobera de
@@ -189,8 +192,9 @@ const currentSkin = () => SKINS[skinIndex];
 // ── Ship ──────────────────────────────────────────────────────────────────────
 class Ship {
   constructor() {
-    this.speedTimer = 0;   // segundos restantes del boost "Velocidad"
-    this.reset();          // reset() no toca speedTimer: el boost sobrevive a muerte y nivel
+    this.speedTimer  = 0;   // segundos restantes del power-up "Velocidad"
+    this.tripleTimer = 0;   // segundos restantes del power-up "Triple Shot"
+    this.reset();          // reset() no toca los timers: los boosts sobreviven a muerte y nivel
   }
 
   reset() {
@@ -212,6 +216,7 @@ class Ship {
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     // El contador se congela mientras dure el estado 'dead' (update solo corre en 'playing')
     if (this.speedTimer    > 0) this.speedTimer = Math.max(0, this.speedTimer - dt);
+    if (this.tripleTimer   > 0) this.tripleTimer = Math.max(0, this.tripleTimer - dt);
 
     const ROT   = 3.5;   // rad/s
     const THRUST = 260;  // px/s²
@@ -237,9 +242,22 @@ class Ship {
     if (this.shootCooldown > 0 || this.dead) return [];
     this.shootCooldown = 0.2;
     const NOSE = currentSkin().nose;
+    const TRIPLE_SPREAD = 0.15;   // rad de apertura a cada lado del disparo central
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
-    return [new Bullet(ox, oy, this.angle)];
+    if (this.tripleTimer <= 0) return [new Bullet(ox, oy, this.angle)];
+    return [-TRIPLE_SPREAD, 0, TRIPLE_SPREAD]
+      .map(off => new Bullet(ox, oy, this.angle + off));
+  }
+
+  // Power-up activo para pintar la nave; con ambos vivos parpadea entre los dos
+  activePowerup() {
+    const active = [];
+    if (this.speedTimer  > 0) active.push(POWERUPS.speed);
+    if (this.tripleTimer > 0) active.push(POWERUPS.triple);
+    if (active.length === 0) return null;
+    if (active.length === 1) return active[0];
+    return active[Math.floor(this.tripleTimer * 8) % active.length];
   }
 
   draw() {
@@ -251,7 +269,8 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = this.speedTimer > 0 ? BOOST_COLOR : skin.hull;
+    const powerup = this.activePowerup();
+    ctx.strokeStyle = powerup ? powerup.color : skin.hull;
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
@@ -266,7 +285,7 @@ class Ship {
       ctx.moveTo(nx, -nw);
       ctx.lineTo(nx - rand(6, 14), 0);
       ctx.lineTo(nx,  nw);
-      ctx.strokeStyle = this.speedTimer > 0 ? BOOST_FLAME : skin.flame;
+      ctx.strokeStyle = powerup ? powerup.flame : skin.flame;
       ctx.stroke();
     }
 
@@ -274,11 +293,12 @@ class Ship {
   }
 }
 
-// ── Pickup "Velocidad" ─────────────────────────────────────────────────────────
+// ── Pickup (un slot por tipo de power-up) ─────────────────────────────────────
 class Pickup {
-  constructor(x, y) {
+  constructor(x, y, kind) {
     this.x = x;
     this.y = y;
+    this.kind = kind;
     const angle = rand(0, Math.PI * 2);
     const speed = rand(8, 20);
     this.vx = Math.cos(angle) * speed;
@@ -294,21 +314,22 @@ class Pickup {
   }
 
   draw() {
+    const cfg = POWERUPS[this.kind];
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rot);
-    ctx.strokeStyle = BOOST_COLOR;
+    ctx.strokeStyle = cfg.color;
     ctx.lineWidth   = 1.5;
     ctx.beginPath();
     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Marca "V" de Velocidad
-    ctx.fillStyle = BOOST_COLOR;
+    // Glifo del power-up ("V" Velocidad, "T" Triple)
+    ctx.fillStyle = cfg.color;
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('V', 0, 0);
+    ctx.fillText(cfg.glyph, 0, 0);
     ctx.restore();
   }
 }
@@ -346,10 +367,13 @@ class Particle {
 }
 
 // ── Estado del juego ──────────────────────────────────────────────────────────
-let ship, bullets, asteroids, particles, pickup;   // pickup === null: ya recogido, no disponible
+let ship, bullets, asteroids, particles;
 let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
+
+// Un slot por power-up. null = ya recogido, todavía no reaparecido
+const pickups = { speed: null, triple: null };
 
 function spawnAsteroids(count) {
   for (let i = 0; i < count; i++) {
@@ -358,9 +382,15 @@ function spawnAsteroids(count) {
   }
 }
 
-function spawnPickup() {
+function spawnPickup(kind) {
   const p = randomSafePoint();
-  pickup = new Pickup(p.x, p.y);
+  pickups[kind] = new Pickup(p.x, p.y, kind);
+}
+
+function updatePickups(dt) {
+  for (const kind in pickups) {
+    if (pickups[kind]) pickups[kind].update(dt);
+  }
 }
 
 function initGame() {
@@ -373,7 +403,8 @@ function initGame() {
   level  = 1;
   state  = 'playing';
   spawnAsteroids(4);
-  spawnPickup();
+  spawnPickup('speed');
+  spawnPickup('triple');
 }
 
 function nextLevel() {
@@ -412,7 +443,7 @@ function update(dt) {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
-    if (pickup) pickup.update(dt);
+    updatePickups(dt);
     return;
   }
 
@@ -421,7 +452,7 @@ function update(dt) {
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
     asteroids.forEach(a => a.update(dt));
-    if (pickup) pickup.update(dt);
+    updatePickups(dt);
     if (deadTimer <= 0) { state = 'playing'; ship.reset(); }
     return;
   }
@@ -435,10 +466,11 @@ function update(dt) {
   bullets.forEach(b => b.update(dt));
   asteroids.forEach(a => a.update(dt));
   particles.forEach(p => p.update(dt));
-  if (pickup) pickup.update(dt);
+  updatePickups(dt);
 
-  // El pickup vuelve a aparecer cuando expira el boost
-  if (!pickup && ship.speedTimer <= 0) spawnPickup();
+  // Cada pickup vuelve a aparecer cuando expira su propio boost
+  if (!pickups.speed  && ship.speedTimer  <= 0) spawnPickup('speed');
+  if (!pickups.triple && ship.tripleTimer <= 0) spawnPickup('triple');
 
   bullets   = bullets.filter(b => !b.dead);
   particles = particles.filter(p => !p.dead);
@@ -469,11 +501,14 @@ function update(dt) {
     }
   }
 
-  // Nave vs power-up Velocidad
-  if (pickup && !ship.dead && dist(ship, pickup) < ship.radius + pickup.radius) {
-    explode(pickup.x, pickup.y, 12);
-    pickup = null;
-    ship.speedTimer = BOOST_TIME;
+  // Nave vs power-ups
+  for (const kind in pickups) {
+    const p = pickups[kind];
+    if (!p || ship.dead || dist(ship, p) >= ship.radius + p.radius) continue;
+    explode(p.x, p.y, 12);
+    pickups[kind] = null;
+    if (kind === 'speed') ship.speedTimer = POWERUPS.speed.time;
+    else ship.tripleTimer = POWERUPS.triple.time;
   }
 
   // Nivel completado
@@ -496,6 +531,18 @@ function drawLifeIcon(x, y) {
   ctx.restore();
 }
 
+// Cuenta regresiva de un power-up activo (columna izquierda)
+function drawBoostHUD(timer, cfg, y) {
+  if (timer <= 0) return;
+  const total = Math.ceil(timer);
+  // Por debajo de un minuto basta con los segundos: "TRIPLE  5s"
+  const text = total >= 60
+    ? `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+    : `${total}s`;
+  ctx.fillStyle = cfg.color;
+  ctx.fillText(`${cfg.label}  ${text}`, 14, y);
+}
+
 function drawHUD() {
   ctx.fillStyle = '#fff';
   ctx.font = '15px monospace';
@@ -503,15 +550,10 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.fillText(`SCORE  ${score}`, 14, 26);
 
-  // Cuenta regresiva del boost "Velocidad" (solo mientras está activo)
-  if (ship.speedTimer > 0) {
-    const total = Math.ceil(ship.speedTimer);
-    const m = Math.floor(total / 60);
-    const s = total % 60;
-    ctx.fillStyle = BOOST_COLOR;
-    ctx.fillText(`VELOCIDAD  ${m}:${String(s).padStart(2, '0')}`, 14, 48);
-    ctx.fillStyle = '#fff';
-  }
+  // El segundo power-up baja a la siguiente fila solo si el primero está visible
+  drawBoostHUD(ship.speedTimer,  POWERUPS.speed,  48);
+  drawBoostHUD(ship.tripleTimer, POWERUPS.triple, ship.speedTimer > 0 ? 70 : 48);
+  ctx.fillStyle = '#fff';
 
   ctx.textAlign = 'center';
   ctx.fillText(`NIVEL ${level}`, W / 2, 26);
@@ -541,7 +583,7 @@ function draw() {
 
   particles.forEach(p => p.draw());
   asteroids.forEach(a => a.draw());
-  if (pickup) pickup.draw();
+  for (const kind in pickups) if (pickups[kind]) pickups[kind].draw();
   bullets.forEach(b => b.draw());
   ship.draw();
 
